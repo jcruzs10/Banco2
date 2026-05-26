@@ -1,9 +1,25 @@
 "use strict";
 
-const API_BASE_URL = "https://bancocentroamericano.azurewebsites.net";
+const API_TIMEOUT_MS = 30000;
+
+function resolveApiBaseUrl() {
+	const params = new URLSearchParams(window.location.search);
+	const fromQuery = params.get("api");
+	if (fromQuery) {
+		return fromQuery.replace(/\/$/, "");
+	}
+	const host = window.location.hostname;
+	if (host === "localhost" || host === "127.0.0.1" || host === "") {
+		return "http://localhost:5195";
+	}
+	return "https://bancocentroamericano.azurewebsites.net";
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 const endpoints = {
 	login: "/api/Auth/login",
+	cuentas: "/api/Cuentahabientes/{idCliente}/cuentas",
 	bitacora: "/api/Bitacora/kardex/{idCuenta}",
 	deposito: "/api/Operaciones/deposito",
 	retiro: "/api/Operaciones/retiro",
@@ -11,9 +27,7 @@ const endpoints = {
 	consultaSaldo: "/api/Operaciones/saldo/{idCuenta}",
 	pagoValidar: "/api/Pagos/validar",
 	pagoEjecutar: "/api/Pagos/ejecutar",
-	consultarDeuda: "/api/Pagos/consultar-deuda/{tipoServicio}/{identificador}",
-	// TODO: agrega el endpoint real para listar cuentas del usuario.
-	cuentas: null
+	consultarDeuda: "/api/Pagos/consultar-deuda/{tipoServicio}/{identificador}"
 };
 
 const dom = {
@@ -51,6 +65,7 @@ const dom = {
 const state = {
 	user: null,
 	token: null,
+	idCliente: null,
 	accounts: [],
 	isDemo: false
 };
@@ -104,9 +119,12 @@ function bindEvents() {
 function restoreSession() {
 	const savedToken = localStorage.getItem("bank.token");
 	const savedUser = localStorage.getItem("bank.user");
-	if (savedToken && savedUser) {
+	const savedCliente = localStorage.getItem("bank.idCliente");
+	if (savedUser && (savedToken || savedCliente)) {
 		state.token = savedToken;
 		state.user = savedUser;
+		state.idCliente = savedCliente ? Number(savedCliente) : null;
+		state.isDemo = false;
 		setSessionUI(true);
 		refreshAll();
 	}
@@ -144,23 +162,33 @@ async function handleLogin(event) {
 
 	setLoading(true);
 	try {
-		const payload = { credencial, password };
+		const payload = { Credencial: credencial, Password: password };
 		const data = await apiRequest(endpoints.login, {
 			method: "POST",
 			body: payload,
 			auth: false
 		});
 		const token = extractToken(data);
+		const idCliente = extractIdCliente(data);
 		state.user = credencial;
 		state.token = token;
+		state.idCliente = idCliente;
 		state.isDemo = false;
 		localStorage.setItem("bank.user", credencial);
-		if (!token) {
+		if (idCliente) {
+			localStorage.setItem("bank.idCliente", String(idCliente));
+		} else {
+			localStorage.removeItem("bank.idCliente");
+		}
+		if (token) {
+			localStorage.setItem("bank.token", token);
+		} else {
 			localStorage.removeItem("bank.token");
-			showToast("No llego token en la respuesta de login.", "error");
+		}
+		if (!idCliente && !token) {
+			showToast("Login sin IdCliente ni token en la respuesta.", "error");
 			return;
 		}
-		localStorage.setItem("bank.token", token);
 		setSessionUI(true);
 		await refreshAll();
 	} catch (err) {
@@ -174,9 +202,11 @@ function useDemo() {
 	state.isDemo = true;
 	state.user = demoData.user;
 	state.token = null;
+	state.idCliente = null;
 	state.accounts = demoData.accounts.slice();
 	localStorage.setItem("bank.user", state.user);
 	localStorage.removeItem("bank.token");
+	localStorage.removeItem("bank.idCliente");
 	setSessionUI(true);
 	paintAccounts();
 	fillAccountSelects();
@@ -186,10 +216,12 @@ function useDemo() {
 function logout() {
 	state.user = null;
 	state.token = null;
+	state.idCliente = null;
 	state.accounts = [];
 	state.isDemo = false;
 	localStorage.removeItem("bank.token");
 	localStorage.removeItem("bank.user");
+	localStorage.removeItem("bank.idCliente");
 	setSessionUI(false);
 	resetTables();
 }
@@ -204,18 +236,26 @@ async function refreshAll() {
 }
 
 async function loadAccounts() {
-	if (!endpoints.cuentas) {
+	if (!state.idCliente) {
 		await loadAccountsByIds();
 		return;
 	}
 	setLoading(true);
 	try {
-		const data = await apiRequest(endpoints.cuentas);
+		const path = endpoints.cuentas.replace("{idCliente}", String(state.idCliente));
+		const data = await apiRequest(path);
 		state.accounts = normalizeAccounts(data);
+		if (state.accounts.length) {
+			state.accounts.forEach((acc) => persistAccountId(acc.idCuenta));
+		}
 		paintAccounts();
 		fillAccountSelects();
+		if (!state.accounts.length) {
+			showToast("No hay cuentas activas para este cliente.");
+		}
 	} catch (err) {
 		showToast(err.message || "No se pudieron cargar cuentas.", "error");
+		await loadAccountsByIds();
 	} finally {
 		setLoading(false);
 	}
@@ -284,7 +324,7 @@ async function addCuenta() {
 }
 
 async function fetchSaldo(idCuenta) {
-	const url = endpoints.consultaSaldo.replace("{idCuenta}", idCuenta);
+	const url = endpoints.consultaSaldo.replace("{idCuenta}", String(idCuenta));
 	const data = await apiRequest(url);
 	if (typeof data === "number") {
 		return data;
@@ -293,7 +333,13 @@ async function fetchSaldo(idCuenta) {
 		const numeric = Number(data);
 		return Number.isNaN(numeric) ? 0 : numeric;
 	}
-	return Number(data?.saldo ?? data?.Saldo ?? 0);
+	return Number(
+		data?.saldoDisponible ??
+			data?.SaldoDisponible ??
+			data?.saldo ??
+			data?.Saldo ??
+			0
+	);
 }
 
 async function loadMovimientos() {
@@ -424,14 +470,14 @@ async function submitPago(event) {
 		tipoServicio,
 		identificador,
 		monto,
-		referenciaCliente
+		referenciaCliente: referenciaCliente || null
 	});
 }
 
 async function postOperacion(url, payload) {
 	setLoading(true);
 	try {
-		await apiRequest(url, { method: "POST", body: payload });
+		await apiRequest(url, { method: "POST", body: normalizeApiPayload(payload) });
 		showToast("Operacion completada.");
 		await refreshAll();
 	} catch (err) {
@@ -489,14 +535,26 @@ function renderMovimientos(items) {
 	const rows = items
 		.map((mov) => {
 			const monto = Number(mov.monto ?? mov.Monto ?? 0);
-			const saldo = Number(mov.saldo ?? mov.Saldo ?? 0);
+			const saldo = mov.saldo ?? mov.Saldo;
+			const tipo =
+				mov.tipo ||
+				mov.Tipo ||
+				mov.codigoTipoTransaccion ||
+				mov.CodigoTipoTransaccion ||
+				"";
+			const detalle =
+				mov.detalle ||
+				mov.Detalle ||
+				mov.descripcionTipoTransaccion ||
+				mov.DescripcionTipoTransaccion ||
+				"";
 			return `
 				<tr>
-					<td>${formatDate(mov.fecha || mov.Fecha)}</td>
-					<td>${escapeHtml(mov.tipo || mov.Tipo || "")}</td>
+					<td>${formatDate(mov.fecha || mov.Fecha || mov.fechaUtc || mov.FechaUtc)}</td>
+					<td>${escapeHtml(tipo)}</td>
 					<td class="right money">${formatMoney(monto)}</td>
-					<td class="right money">${formatMoney(saldo)}</td>
-					<td>${escapeHtml(mov.detalle || mov.Descripcion || "")}</td>
+					<td class="right money">${saldo != null ? formatMoney(saldo) : "—"}</td>
+					<td>${escapeHtml(detalle)}</td>
 				</tr>
 			`;
 		})
@@ -511,11 +569,23 @@ function renderBitacora(items) {
 	const rows = items
 		.map((item) => {
 			const monto = Number(item.monto ?? item.Monto ?? 0);
+			const accion =
+				item.accion ||
+				item.Accion ||
+				item.codigoTipoTransaccion ||
+				item.CodigoTipoTransaccion ||
+				"";
+			const detalle =
+				item.detalle ||
+				item.Detalle ||
+				item.descripcionTipoTransaccion ||
+				item.DescripcionTipoTransaccion ||
+				"";
 			return `
 				<tr>
-					<td>${formatDate(item.fecha || item.Fecha)}</td>
-					<td>${escapeHtml(item.accion || item.Accion || "")}</td>
-					<td>${escapeHtml(item.detalle || item.Detalle || "")}</td>
+					<td>${formatDate(item.fecha || item.Fecha || item.fechaUtc || item.FechaUtc)}</td>
+					<td>${escapeHtml(accion)}</td>
+					<td>${escapeHtml(detalle)}</td>
 					<td class="right money">${formatMoney(monto)}</td>
 				</tr>
 			`;
@@ -540,11 +610,52 @@ function normalizeAccounts(data) {
 	const list = Array.isArray(data) ? data : data.items || data.cuentas || [];
 	return list.map((account) => ({
 		idCuenta: account.idCuenta ?? account.IdCuenta ?? account.id ?? account.Id,
-		numero: account.numero ?? account.NumeroCuenta ?? account.cuenta,
-		tipo: account.tipo ?? account.TipoCuenta ?? account.descripcion,
-		saldo: Number(account.saldo ?? account.Saldo ?? 0),
+		numero:
+			account.numero ??
+			account.NumeroCuenta ??
+			account.noCuenta ??
+			account.NoCuenta ??
+			account.cuenta,
+		tipo:
+			account.tipo ??
+			account.TipoCuenta ??
+			account.descripcionTipoCuenta ??
+			account.DescripcionTipoCuenta ??
+			account.descripcion,
+		saldo: Number(
+			account.saldo ??
+				account.Saldo ??
+				account.saldoDisponible ??
+				account.SaldoDisponible ??
+				0
+		),
 		moneda: account.moneda ?? account.Moneda ?? "GTQ"
 	}));
+}
+
+function normalizeApiPayload(payload) {
+	const out = { ...payload };
+	for (const key of ["idCuenta", "idCuentaOrigen", "idCuentaDestino"]) {
+		if (out[key] !== undefined && out[key] !== "") {
+			out[key] = Number(out[key]);
+		}
+	}
+	if (out.tipoServicio !== undefined && out.tipoServicio !== "") {
+		out.tipoServicio = Number(out.tipoServicio);
+	}
+	if (out.monto !== undefined) {
+		out.monto = Number(out.monto);
+	}
+	return out;
+}
+
+function extractIdCliente(data) {
+	if (!data || typeof data !== "object") {
+		return null;
+	}
+	const raw = data.idCliente ?? data.IdCliente ?? null;
+	const parsed = Number(raw);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function readAccountIds() {
@@ -583,7 +694,18 @@ function extractToken(data) {
 	if (!data || typeof data !== "object") {
 		return null;
 	}
-	return data.token || data.accessToken || data.jwt || data.bearerToken || null;
+	return (
+		data.token ||
+		data.Token ||
+		data.accessToken ||
+		data.AccessToken ||
+		data.access_token ||
+		data.jwt ||
+		data.Jwt ||
+		data.bearerToken ||
+		data.BearerToken ||
+		null
+	);
 }
 
 async function apiRequest(path, options = {}) {
@@ -597,11 +719,29 @@ async function apiRequest(path, options = {}) {
 		headers.Authorization = `Bearer ${state.token}`;
 	}
 
-	const response = await fetch(url, {
-		method,
-		headers,
-		body: body !== undefined ? JSON.stringify(body) : undefined
-	});
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+
+	let response;
+	try {
+		response = await fetch(url, {
+			method,
+			headers,
+			body: body !== undefined ? JSON.stringify(body) : undefined,
+			signal: controller.signal
+		});
+	} catch (err) {
+		if (err.name === "AbortError") {
+			throw new Error(
+				`La API no respondió a tiempo (${API_TIMEOUT_MS / 1000}s). Verifica que el backend esté en ${API_BASE_URL}`
+			);
+		}
+		throw new Error(
+			`No se pudo conectar con ${API_BASE_URL}. ¿Está el API en ejecución? (${err.message || err})`
+		);
+	} finally {
+		clearTimeout(timeoutId);
+	}
 
 	if (!response.ok) {
 		const errText = await safeText(response);
@@ -621,12 +761,32 @@ async function safeText(response) {
 		const contentType = response.headers.get("content-type") || "";
 		if (contentType.includes("application/json")) {
 			const data = await response.json();
-			return data.message || data.error || JSON.stringify(data);
+			if (typeof data === "string") {
+				return data;
+			}
+			if (data.title) {
+				const detail = formatValidationErrors(data.errors);
+				return detail ? `${data.title}: ${detail}` : data.title;
+			}
+			if (data.error) {
+				return typeof data.error === "string" ? data.error : JSON.stringify(data.error);
+			}
+			return data.message || data.mensaje || JSON.stringify(data);
 		}
 		return await response.text();
 	} catch {
 		return "";
 	}
+}
+
+function formatValidationErrors(errors) {
+	if (!errors || typeof errors !== "object") {
+		return "";
+	}
+	return Object.entries(errors)
+		.flatMap(([, messages]) => (Array.isArray(messages) ? messages : [messages]))
+		.filter(Boolean)
+		.join(" ");
 }
 
 function showToast(message, type) {

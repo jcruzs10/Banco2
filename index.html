@@ -1,0 +1,327 @@
+
+<!doctype html>
+<html lang="es">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Banco — Panel</title>
+		<link rel="stylesheet" href="./styles.css" />
+	</head>
+	<body>
+		<header class="app-header">
+			<div class="container header-inner">
+				<div class="brand" aria-label="Inicio">
+					<div class="brand-mark" aria-hidden="true"></div>
+					<div class="brand-text">
+						<div class="brand-name">Banco</div>
+						<div class="brand-sub">Panel de cliente</div>
+					</div>
+				</div>
+
+				<nav class="nav" aria-label="Navegación principal">
+					<button class="nav-btn" data-view="resumen" type="button" disabled>
+						Resumen
+					</button>
+					<button class="nav-btn" data-view="operaciones" type="button" disabled>
+						Operaciones
+					</button>
+					<button class="nav-btn" data-view="pagos" type="button" disabled>
+						Pagos
+					</button>
+					<button class="nav-btn" data-view="bitacora" type="button" disabled>
+						Bitácora
+					</button>
+				</nav>
+
+				<div class="header-actions">
+					<div class="user-pill" id="userPill" hidden>
+						<span class="user-pill-label">Sesión:</span>
+						<span class="user-pill-value" id="userName">—</span>
+					</div>
+					<button class="btn btn-ghost" id="btnLogout" type="button" hidden>
+						Salir
+					</button>
+				</div>
+			</div>
+		</header>
+
+		<main class="app-main">
+			<div class="container">
+				<section class="card" id="authCard" aria-label="Inicio de sesión">
+					<div class="card-header">
+						<h1 class="h1">Iniciar sesión</h1>
+						<p class="muted">Accede para ver tus cuentas y operar.</p>
+					</div>
+
+					<form id="loginForm" class="form-grid" autocomplete="on">
+						<div class="field">
+							<label for="loginUser">Usuario</label>
+							<input
+								id="loginUser"
+								name="usuario"
+								type="text"
+								inputmode="text"
+								autocomplete="username"
+								required
+								placeholder="tu.usuario"
+							/>
+						</div>
+
+						<div class="field">
+							<label for="loginPass">Contraseña</label>
+							<input
+								id="loginPass"
+								name="password"
+								type="password"
+								autocomplete="current-password"
+								required
+								placeholder="••••••••"
+							/>
+						</div>
+
+						<div class="form-actions">
+							<button class="btn" id="btnLogin" type="submit">Entrar</button>
+							<button class="btn btn-ghost" id="btnUseDemo" type="button">
+								Usar datos de demo
+							</button>
+						</div>
+
+						<div class="hint">
+							<strong>Conexión API:</strong> ajusta <code>API_BASE_URL</code> y
+							<code>endpoints</code> en <code>app.js</code>.
+						</div>
+					</form>
+				</section>
+
+				<section id="appShell" hidden>
+					<section class="grid" aria-label="Contenido">
+						<div class="card" id="viewResumen" data-view-panel>
+							<div class="card-header">
+								<h2 class="h2">Resumen</h2>
+								<div class="card-header-actions">
+									<button class="btn btn-ghost" id="btnRefresh" type="button">
+										Actualizar
+									</button>
+								</div>
+							</div>
+
+							<div class="split">
+								<div>
+									<div class="section-title">Cuentas</div>
+									<div class="cards" id="accountsList" aria-live="polite"></div>
+								</div>
+
+								<div>
+									<div class="section-title">Movimientos</div>
+									<div class="toolbar">
+										<div class="field inline">
+											<label for="movCuenta">Cuenta</label>
+											<select id="movCuenta" name="movCuenta"></select>
+										</div>
+										<button class="btn btn-ghost" id="btnLoadMov" type="button">
+											Ver
+										</button>
+									</div>
+									<div class="table-wrap">
+										<table class="table" aria-label="Movimientos">
+											<thead>
+												<tr>
+													<th>Fecha</th>
+													<th>Tipo</th>
+													<th class="right">Monto</th>
+													<th class="right">Saldo</th>
+													<th>Detalle</th>
+												</tr>
+											</thead>
+											<tbody id="movimientosBody"></tbody>
+										</table>
+									</div>
+								</div>
+							</div>
+						</div>
+
+						<div class="card" id="viewOperaciones" data-view-panel hidden>
+							<div class="card-header">
+								<h2 class="h2">Operaciones</h2>
+								<p class="muted">Depósito, retiro y transferencia.</p>
+							</div>
+
+							<div class="op-grid">
+								<form class="op-card" id="depositoForm">
+									<div class="op-title">Depósito</div>
+									<div class="field">
+										<label for="depCuenta">Cuenta destino</label>
+										<select id="depCuenta" required></select>
+									</div>
+									<div class="field">
+										<label for="depMonto">Monto</label>
+										<input id="depMonto" type="number" min="0" step="0.01" required />
+									</div>
+									<div class="field">
+										<label for="depRef">Referencia</label>
+										<input id="depRef" type="text" placeholder="Boleta, agencia, etc." />
+									</div>
+									<button class="btn" type="submit">Confirmar</button>
+								</form>
+
+								<form class="op-card" id="retiroForm">
+									<div class="op-title">Retiro</div>
+									<div class="field">
+										<label for="retCuenta">Cuenta origen</label>
+										<select id="retCuenta" required></select>
+									</div>
+									<div class="field">
+										<label for="retMonto">Monto</label>
+										<input id="retMonto" type="number" min="0" step="0.01" required />
+									</div>
+									<div class="field">
+										<label for="retRef">Referencia</label>
+										<input id="retRef" type="text" placeholder="Cajero, ventanilla, etc." />
+									</div>
+									<button class="btn" type="submit">Confirmar</button>
+								</form>
+
+								<form class="op-card" id="transferForm">
+									<div class="op-title">Transferencia</div>
+									<div class="field">
+										<label for="trfOrigen">Cuenta origen</label>
+										<select id="trfOrigen" required></select>
+									</div>
+									<div class="field">
+										<label for="trfDestino">Cuenta destino (ID)</label>
+										<input
+											id="trfDestino"
+											type="text"
+											inputmode="numeric"
+											required
+											placeholder="0000000000"
+										/>
+									</div>
+									<div class="field">
+										<label for="trfMonto">Monto</label>
+										<input id="trfMonto" type="number" min="0" step="0.01" required />
+									</div>
+									<div class="field">
+										<label for="trfDesc">Descripción</label>
+										<input id="trfDesc" type="text" placeholder="Pago, ahorro, etc." />
+									</div>
+									<button class="btn" type="submit">Confirmar</button>
+								</form>
+							</div>
+						</div>
+
+						<div class="card" id="viewPagos" data-view-panel hidden>
+							<div class="card-header">
+								<h2 class="h2">Pagos de servicios</h2>
+								<p class="muted">Selecciona cuenta y paga un servicio.</p>
+							</div>
+
+							<form class="form-grid" id="pagoServicioForm">
+								<div class="field">
+									<label for="pagoCuenta">Cuenta</label>
+									<select id="pagoCuenta" required></select>
+								</div>
+								<div class="field">
+									<label for="pagoServicio">Servicio</label>
+									<select id="pagoServicio" required>
+										<option value="1">Luz</option>
+										<option value="2">Agua</option>
+										<option value="3">Internet</option>
+										<option value="4">Telefonía</option>
+									</select>
+								</div>
+								<div class="field">
+									<label for="pagoIdentificador">Identificador</label>
+									<input
+										id="pagoIdentificador"
+										type="text"
+										required
+										placeholder="Nº contrato / Nº cliente"
+									/>
+								</div>
+								<div class="field">
+									<label for="pagoTarjeta">Número de tarjeta</label>
+									<input
+										id="pagoTarjeta"
+										type="text"
+										inputmode="numeric"
+										required
+										placeholder="16 dígitos"
+									/>
+								</div>
+								<div class="field">
+									<label for="pagoPin">PIN</label>
+									<input
+										id="pagoPin"
+										type="password"
+										inputmode="numeric"
+										required
+										placeholder="••••"
+									/>
+								</div>
+								<div class="field">
+									<label for="pagoMonto">Monto</label>
+									<input id="pagoMonto" type="number" min="0" step="0.01" required />
+								</div>
+								<div class="field">
+									<label for="pagoRef">Referencia (opcional)</label>
+									<input id="pagoRef" type="text" placeholder="Nota para el pago" />
+								</div>
+								<div class="form-actions">
+									<button class="btn" type="submit">Pagar</button>
+								</div>
+							</form>
+						</div>
+
+						<div class="card" id="viewBitacora" data-view-panel hidden>
+							<div class="card-header">
+								<h2 class="h2">Bitácora</h2>
+								<p class="muted">Registro de operaciones y eventos.</p>
+							</div>
+
+							<div class="toolbar">
+								<div class="field inline">
+									<label for="bitDesde">Desde</label>
+									<input id="bitDesde" type="date" />
+								</div>
+								<div class="field inline">
+									<label for="bitHasta">Hasta</label>
+									<input id="bitHasta" type="date" />
+								</div>
+								<div class="field inline">
+									<label for="bitTexto">Buscar</label>
+									<input id="bitTexto" type="text" placeholder="depósito, pago…" />
+								</div>
+								<button class="btn btn-ghost" id="btnLoadBitacora" type="button">
+									Cargar
+								</button>
+							</div>
+
+							<div class="table-wrap">
+								<table class="table" aria-label="Bitácora">
+									<thead>
+										<tr>
+											<th>Fecha</th>
+											<th>Acción</th>
+											<th>Detalle</th>
+											<th class="right">Monto</th>
+										</tr>
+									</thead>
+									<tbody id="bitacoraBody"></tbody>
+								</table>
+							</div>
+						</div>
+					</section>
+				</section>
+
+				<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+				<div class="overlay" id="overlay" hidden aria-hidden="true">
+					<div class="spinner" aria-label="Cargando"></div>
+				</div>
+			</div>
+		</main>
+
+		<script src="./app.js" defer></script>
+	</body>
+</html>
+

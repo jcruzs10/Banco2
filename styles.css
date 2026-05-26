@@ -452,6 +452,10 @@ input::placeholder {
 	place-items: center;
 }
 
+.overlay[hidden] {
+	display: none;
+}
+
 .spinner {
 	width: 46px;
 	height: 46px;

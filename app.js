@@ -1,6 +1,7 @@
 "use strict";
 
-const API_BASE_URL = "https://bancocentroamericano.azurewebsites.net";
+const DEFAULT_API_BASE_URL = "https://bancocentroamericano.azurewebsites.net";
+const API_BASE_URL = resolveApiBase();
 
 const endpoints = {
 	login: "/api/Auth/login",
@@ -22,6 +23,8 @@ const dom = {
 	loginPass: document.getElementById("loginPass"),
 	btnUseDemo: document.getElementById("btnUseDemo"),
 	btnLogout: document.getElementById("btnLogout"),
+	apiBaseInput: document.getElementById("apiBaseInput"),
+	btnSaveApi: document.getElementById("btnSaveApi"),
 	btnAddCuenta: document.getElementById("btnAddCuenta"),
 	addCuentaId: document.getElementById("addCuentaId"),
 	btnRefresh: document.getElementById("btnRefresh"),
@@ -79,6 +82,7 @@ init();
 
 function init() {
 	bindEvents();
+	seedApiBaseInput();
 	restoreSession();
 }
 
@@ -86,6 +90,7 @@ function bindEvents() {
 	dom.loginForm.addEventListener("submit", handleLogin);
 	dom.btnUseDemo.addEventListener("click", useDemo);
 	dom.btnLogout.addEventListener("click", logout);
+	dom.btnSaveApi.addEventListener("click", saveApiBase);
 	dom.btnAddCuenta.addEventListener("click", addCuenta);
 	dom.btnRefresh.addEventListener("click", refreshAll);
 	dom.btnLoadMov.addEventListener("click", loadMovimientos);
@@ -145,12 +150,12 @@ async function handleLogin(event) {
 	setLoading(true);
 	try {
 		const payload = { credencial, password };
-		const data = await apiRequest(endpoints.login, {
+		const { data, response } = await apiRequestWithResponse(endpoints.login, {
 			method: "POST",
 			body: payload,
 			auth: false
 		});
-		const token = extractToken(data);
+		const token = extractToken(data, response);
 		state.user = credencial;
 		state.token = token;
 		state.isDemo = false;
@@ -190,6 +195,7 @@ function logout() {
 	state.isDemo = false;
 	localStorage.removeItem("bank.token");
 	localStorage.removeItem("bank.user");
+	localStorage.removeItem("bank.accountIds");
 	setSessionUI(false);
 	resetTables();
 }
@@ -331,7 +337,10 @@ async function loadBitacora() {
 	}
 	setLoading(true);
 	try {
-		const url = endpoints.bitacora.replace("{idCuenta}", accountId);
+		const url = withQueryParams(
+			endpoints.bitacora.replace("{idCuenta}", accountId),
+			getBitacoraFilters()
+		);
 		const data = await apiRequest(url);
 		renderBitacora(Array.isArray(data) ? data : data?.items || []);
 	} catch (err) {
@@ -579,11 +588,26 @@ function upsertAccount(account) {
 	state.accounts.push(account);
 }
 
-function extractToken(data) {
-	if (!data || typeof data !== "object") {
-		return null;
+function extractToken(data, response) {
+	if (data) {
+		if (typeof data === "string") {
+			return data.trim() || null;
+		}
+		if (typeof data === "object") {
+			return data.token || data.accessToken || data.jwt || data.bearerToken || null;
+		}
 	}
-	return data.token || data.accessToken || data.jwt || data.bearerToken || null;
+	if (response) {
+		const authHeader = response.headers.get("authorization");
+		if (authHeader) {
+			return authHeader.replace(/^Bearer\s+/i, "").trim();
+		}
+		const customToken = response.headers.get("x-access-token");
+		if (customToken) {
+			return customToken.trim();
+		}
+	}
+	return null;
 }
 
 async function apiRequest(path, options = {}) {
@@ -614,6 +638,39 @@ async function apiRequest(path, options = {}) {
 	}
 	const text = await response.text();
 	return text ? text : null;
+}
+
+async function apiRequestWithResponse(path, options = {}) {
+	const { method = "GET", body, auth = true } = options;
+	const url = `${API_BASE_URL}${path}`;
+	const headers = { Accept: "application/json" };
+	if (body !== undefined) {
+		headers["Content-Type"] = "application/json";
+	}
+	if (auth && state.token) {
+		headers.Authorization = `Bearer ${state.token}`;
+	}
+
+	const response = await fetch(url, {
+		method,
+		headers,
+		body: body !== undefined ? JSON.stringify(body) : undefined
+	});
+
+	if (!response.ok) {
+		const errText = await safeText(response);
+		throw new Error(errText || `HTTP ${response.status}`);
+	}
+
+	const contentType = response.headers.get("content-type") || "";
+	let data = null;
+	if (contentType.includes("application/json")) {
+		data = await response.json();
+	} else {
+		const text = await response.text();
+		data = text ? text : null;
+	}
+	return { data, response };
 }
 
 async function safeText(response) {
@@ -661,6 +718,80 @@ function formatDate(value) {
 		return String(value);
 	}
 	return date.toLocaleString("es-GT");
+}
+
+function escapeHtml(value) {
+	return String(value ?? "")
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/\"/g, "&quot;")
+		.replace(/'/g, "&#39;");
+}
+
+function applyDemoBalance(accountId, delta) {
+	const target = state.accounts.find((acc) => String(acc.idCuenta) === String(accountId));
+	if (!target) {
+		return;
+	}
+	target.saldo = Number(target.saldo || 0) + Number(delta || 0);
+	paintAccounts();
+}
+
+function capitalize(value) {
+	return value ? value.charAt(0).toUpperCase() + value.slice(1) : "";
+}
+
+function getBitacoraFilters() {
+	const desde = document.getElementById("bitDesde").value;
+	const hasta = document.getElementById("bitHasta").value;
+	const params = {};
+	if (desde) {
+		params.desde = new Date(desde).toISOString();
+	}
+	if (hasta) {
+		params.hasta = new Date(hasta).toISOString();
+	}
+	return params;
+}
+
+function withQueryParams(path, params) {
+	if (!params || Object.keys(params).length === 0) {
+		return path;
+	}
+	const search = new URLSearchParams(params);
+	return `${path}?${search.toString()}`;
+}
+
+function resolveApiBase() {
+	const params = new URLSearchParams(window.location.search);
+	const fromQuery = params.get("api");
+	if (fromQuery) {
+		const trimmed = fromQuery.trim().replace(/\/$/, "");
+		localStorage.setItem("bank.apiBase", trimmed);
+		return trimmed;
+	}
+	const stored = localStorage.getItem("bank.apiBase");
+	if (stored) {
+		return stored.replace(/\/$/, "");
+	}
+	return DEFAULT_API_BASE_URL;
+}
+
+function seedApiBaseInput() {
+	if (dom.apiBaseInput) {
+		dom.apiBaseInput.value = API_BASE_URL;
+	}
+}
+
+function saveApiBase() {
+	const value = dom.apiBaseInput.value.trim().replace(/\/$/, "");
+	if (!value) {
+		showToast("Ingresa una URL valida.", "error");
+		return;
+	}
+	localStorage.setItem("bank.apiBase", value);
+	showToast("API base actualizada. Recarga la pagina.");
 }
 
 function escapeHtml(value) {

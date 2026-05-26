@@ -1,6 +1,8 @@
 "use strict";
 
-const API_BASE_URL = "https://bancocentroamericano.azurewebsites.net";
+const DEFAULT_API_BASE_URL = "https://bancocentroamericano.azurewebsites.net";
+const API_BASE_URL = resolveApiBase();
+const API_TIMEOUT_MS = 15000;
 
 const endpoints = {
 	login: "/api/Auth/login",
@@ -152,12 +154,13 @@ async function handleLogin(event) {
 	setLoading(true);
 	try {
 		const payload = { credencial, password };
-		const data = await apiRequest(endpoints.login, {
+		const { data, response } = await apiRequestWithResponse(endpoints.login, {
 			method: "POST",
 			body: payload,
 			auth: false
 		});
-		const token = extractToken(data);
+		const token = extractToken(data, response);
+		const idCliente = extractIdCliente(data);
 		state.user = credencial;
 		state.token = token;
 		state.idCliente = idCliente;
@@ -680,11 +683,26 @@ function upsertAccount(account) {
 	state.accounts.push(account);
 }
 
-function extractToken(data) {
-	if (!data || typeof data !== "object") {
-		return null;
+function extractToken(data, response) {
+	if (data) {
+		if (typeof data === "string") {
+			return data.trim() || null;
+		}
+		if (typeof data === "object") {
+			return data.token || data.accessToken || data.jwt || data.bearerToken || null;
+		}
 	}
-	return data.token || data.accessToken || data.jwt || data.bearerToken || null;
+	if (response) {
+		const authHeader = response.headers.get("authorization");
+		if (authHeader) {
+			return authHeader.replace(/^Bearer\s+/i, "").trim();
+		}
+		const customToken = response.headers.get("x-access-token");
+		if (customToken) {
+			return customToken.trim();
+		}
+	}
+	return null;
 }
 
 async function apiRequest(path, options = {}) {
@@ -746,11 +764,29 @@ async function apiRequestWithResponse(path, options = {}) {
 		headers.Authorization = `Bearer ${state.token}`;
 	}
 
-	const response = await fetch(url, {
-		method,
-		headers,
-		body: body !== undefined ? JSON.stringify(body) : undefined
-	});
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+
+	let response;
+	try {
+		response = await fetch(url, {
+			method,
+			headers,
+			body: body !== undefined ? JSON.stringify(body) : undefined,
+			signal: controller.signal
+		});
+	} catch (err) {
+		if (err.name === "AbortError") {
+			throw new Error(
+				`La API no respondió a tiempo (${API_TIMEOUT_MS / 1000}s). Verifica que el backend esté en ${API_BASE_URL}`
+			);
+		}
+		throw new Error(
+			`No se pudo conectar con ${API_BASE_URL}. ¿Está el API en ejecución? (${err.message || err})`
+		);
+	} finally {
+		clearTimeout(timeoutId);
+	}
 
 	if (!response.ok) {
 		const errText = await safeText(response);
@@ -907,26 +943,4 @@ function saveApiBase() {
 	}
 	localStorage.setItem("bank.apiBase", value);
 	showToast("API base actualizada. Recarga la pagina.");
-}
-
-function escapeHtml(value) {
-	return String(value ?? "")
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/\"/g, "&quot;")
-		.replace(/'/g, "&#39;");
-}
-
-function applyDemoBalance(accountId, delta) {
-	const target = state.accounts.find((acc) => String(acc.idCuenta) === String(accountId));
-	if (!target) {
-		return;
-	}
-	target.saldo = Number(target.saldo || 0) + Number(delta || 0);
-	paintAccounts();
-}
-
-function capitalize(value) {
-	return value ? value.charAt(0).toUpperCase() + value.slice(1) : "";
 }

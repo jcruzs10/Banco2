@@ -3,7 +3,6 @@
 const DEFAULT_API_BASE_URL = "https://bancocentroamericano.azurewebsites.net";
 const API_BASE_URL = resolveApiBase();
 const API_TIMEOUT_MS = 15000;
-
 const endpoints = {
 	login: "/api/Auth/login",
 	cuentas: "/api/Cuentahabientes/{idCliente}/cuentas",
@@ -59,6 +58,8 @@ const state = {
 	isDemo: false
 };
 
+let loadingTimeoutId = null;
+
 const demoData = {
 	user: "demo.usuario",
 	accounts: [
@@ -84,6 +85,7 @@ init();
 function init() {
 	bindEvents();
 	seedApiBaseInput();
+	setLoading(false);
 	restoreSession();
 }
 
@@ -849,6 +851,17 @@ function showToast(message, type) {
 function setLoading(isLoading) {
 	dom.overlay.hidden = !isLoading;
 	dom.overlay.setAttribute("aria-hidden", String(!isLoading));
+	if (loadingTimeoutId) {
+		clearTimeout(loadingTimeoutId);
+		loadingTimeoutId = null;
+	}
+	if (isLoading) {
+		loadingTimeoutId = setTimeout(() => {
+			dom.overlay.hidden = true;
+			dom.overlay.setAttribute("aria-hidden", "true");
+			showToast("Tiempo de espera agotado. Revisa la conexion al API.", "error");
+		}, API_TIMEOUT_MS + 2000);
+	}
 }
 
 function formatMoney(value, currency = "GTQ") {
@@ -944,3 +957,14 @@ function saveApiBase() {
 	localStorage.setItem("bank.apiBase", value);
 	showToast("API base actualizada. Recarga la pagina.");
 }
+
+window.addEventListener("error", (event) => {
+	setLoading(false);
+	showToast(`Error: ${event.message}`, "error");
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+	setLoading(false);
+	const message = event.reason?.message || String(event.reason || "Error desconocido");
+	showToast(`Error: ${message}`, "error");
+});

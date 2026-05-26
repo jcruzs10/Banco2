@@ -22,6 +22,8 @@ const dom = {
 	loginPass: document.getElementById("loginPass"),
 	btnUseDemo: document.getElementById("btnUseDemo"),
 	btnLogout: document.getElementById("btnLogout"),
+	btnAddCuenta: document.getElementById("btnAddCuenta"),
+	addCuentaId: document.getElementById("addCuentaId"),
 	btnRefresh: document.getElementById("btnRefresh"),
 	btnLoadMov: document.getElementById("btnLoadMov"),
 	btnLoadBitacora: document.getElementById("btnLoadBitacora"),
@@ -84,6 +86,7 @@ function bindEvents() {
 	dom.loginForm.addEventListener("submit", handleLogin);
 	dom.btnUseDemo.addEventListener("click", useDemo);
 	dom.btnLogout.addEventListener("click", logout);
+	dom.btnAddCuenta.addEventListener("click", addCuenta);
 	dom.btnRefresh.addEventListener("click", refreshAll);
 	dom.btnLoadMov.addEventListener("click", loadMovimientos);
 	dom.btnLoadBitacora.addEventListener("click", loadBitacora);
@@ -152,12 +155,12 @@ async function handleLogin(event) {
 		state.token = token;
 		state.isDemo = false;
 		localStorage.setItem("bank.user", credencial);
-		if (token) {
-			localStorage.setItem("bank.token", token);
-		} else {
+		if (!token) {
 			localStorage.removeItem("bank.token");
-			showToast("Login OK, pero no llego token. Revisa la respuesta.");
+			showToast("No llego token en la respuesta de login.", "error");
+			return;
 		}
+		localStorage.setItem("bank.token", token);
 		setSessionUI(true);
 		await refreshAll();
 	} catch (err) {
@@ -202,7 +205,7 @@ async function refreshAll() {
 
 async function loadAccounts() {
 	if (!endpoints.cuentas) {
-		showToast("Define endpoints.cuentas para listar cuentas.", "error");
+		await loadAccountsByIds();
 		return;
 	}
 	setLoading(true);
@@ -216,6 +219,81 @@ async function loadAccounts() {
 	} finally {
 		setLoading(false);
 	}
+}
+
+async function loadAccountsByIds() {
+	const accountIds = readAccountIds();
+	if (!accountIds.length) {
+		showToast("Agrega el ID de una cuenta para consultar saldo.");
+		return;
+	}
+	setLoading(true);
+	try {
+		const results = await Promise.all(
+			accountIds.map(async (idCuenta) => {
+				const saldo = await fetchSaldo(idCuenta);
+				return {
+					idCuenta,
+					numero: idCuenta,
+					tipo: "Cuenta",
+					saldo,
+					moneda: "GTQ"
+				};
+			})
+		);
+		state.accounts = results;
+		paintAccounts();
+		fillAccountSelects();
+	} catch (err) {
+		showToast(err.message || "No se pudo consultar saldo.", "error");
+	} finally {
+		setLoading(false);
+	}
+}
+
+async function addCuenta() {
+	const idCuenta = dom.addCuentaId.value.trim();
+	if (!idCuenta) {
+		showToast("Ingresa un ID de cuenta.");
+		return;
+	}
+	if (state.isDemo) {
+		showToast("Modo demo: no se consulta saldo real.");
+		return;
+	}
+	setLoading(true);
+	try {
+		const saldo = await fetchSaldo(idCuenta);
+		upsertAccount({
+			idCuenta,
+			numero: idCuenta,
+			tipo: "Cuenta",
+			saldo,
+			moneda: "GTQ"
+		});
+		persistAccountId(idCuenta);
+		dom.addCuentaId.value = "";
+		paintAccounts();
+		fillAccountSelects();
+		showToast("Cuenta agregada.");
+	} catch (err) {
+		showToast(err.message || "No se pudo agregar la cuenta.", "error");
+	} finally {
+		setLoading(false);
+	}
+}
+
+async function fetchSaldo(idCuenta) {
+	const url = endpoints.consultaSaldo.replace("{idCuenta}", idCuenta);
+	const data = await apiRequest(url);
+	if (typeof data === "number") {
+		return data;
+	}
+	if (typeof data === "string" && data.trim()) {
+		const numeric = Number(data);
+		return Number.isNaN(numeric) ? 0 : numeric;
+	}
+	return Number(data?.saldo ?? data?.Saldo ?? 0);
 }
 
 async function loadMovimientos() {
@@ -467,6 +545,38 @@ function normalizeAccounts(data) {
 		saldo: Number(account.saldo ?? account.Saldo ?? 0),
 		moneda: account.moneda ?? account.Moneda ?? "GTQ"
 	}));
+}
+
+function readAccountIds() {
+	const raw = localStorage.getItem("bank.accountIds");
+	if (!raw) {
+		return [];
+	}
+	try {
+		const parsed = JSON.parse(raw);
+		return Array.isArray(parsed) ? parsed : [];
+	} catch {
+		return [];
+	}
+}
+
+function persistAccountId(idCuenta) {
+	const list = readAccountIds();
+	if (!list.includes(idCuenta)) {
+		list.push(idCuenta);
+		localStorage.setItem("bank.accountIds", JSON.stringify(list));
+	}
+}
+
+function upsertAccount(account) {
+	const index = state.accounts.findIndex(
+		(item) => String(item.idCuenta) === String(account.idCuenta)
+	);
+	if (index >= 0) {
+		state.accounts[index] = { ...state.accounts[index], ...account };
+		return;
+	}
+	state.accounts.push(account);
 }
 
 function extractToken(data) {

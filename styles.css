@@ -271,6 +271,14 @@ code {
 	gap: 10px;
 }
 
+.field.inline.compact {
+	gap: 8px;
+}
+
+.field.inline.compact input {
+	min-width: 120px;
+}
+
 label {
 	font-size: 13px;
 	color: var(--muted);
